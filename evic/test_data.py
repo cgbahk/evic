@@ -5,11 +5,12 @@ import pytest
 import torch
 import torchvision.transforms as T
 from PIL import Image
+import numpy as np
 
-from data import DistinctLabelImageContextDataset
+from .data import DistinctLabelImageContextDataset
 
 
-def create_dummy_images(root: Path, num_labels, imgs_per_label, size_wh):
+def create_random_images(root: Path, num_labels, imgs_per_label, size_wh):
     """
     Create synthetic RGB images for testing under root directory.
     Returns (img_paths, labels)
@@ -21,13 +22,14 @@ def create_dummy_images(root: Path, num_labels, imgs_per_label, size_wh):
         label_dir.mkdir(parents=True, exist_ok=True)
         for i in range(imgs_per_label):
             img_path = label_dir / f"img_{i}.png"
-            img = Image.new("RGB", size_wh, color=(label * 40, i * 20, 100))
-            img.save(img_path)
 
-            assert isinstance(img_path, Path)
+            Image.fromarray(
+                np.random.randint(0, 256, (size_wh[1], size_wh[0], 3), dtype=np.uint8)
+            ).save(img_path)
+
             img_paths.append(img_path)
-
             labels.append(label)
+
     return img_paths, labels
 
 
@@ -36,7 +38,7 @@ def test_positive():
     W, H = 16, 32
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        img_paths, labels = create_dummy_images(
+        img_paths, labels = create_random_images(
             Path(tmpdir),
             num_labels=3,
             imgs_per_label=4,
@@ -70,7 +72,7 @@ def test_positive():
 def test_label_vs_context_size():
     def _run(num_labels, context_size):
         with tempfile.TemporaryDirectory() as tmpdir:
-            img_paths, labels = create_dummy_images(
+            img_paths, labels = create_random_images(
                 Path(tmpdir),
                 num_labels=num_labels,
                 imgs_per_label=4,
@@ -95,7 +97,7 @@ def test_small_context_size():
 
     with pytest.raises(AssertionError):
         with tempfile.TemporaryDirectory() as tmpdir:
-            img_paths, labels = create_dummy_images(
+            img_paths, labels = create_random_images(
                 Path(tmpdir),
                 num_labels=3,
                 imgs_per_label=4,
