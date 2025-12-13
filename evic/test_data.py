@@ -119,7 +119,7 @@ def test_same_seed_same_result():
         _test_same(47, shuffle=False, num_workers=2)
 
 
-def test_diff_seed_diff_result():
+def test_diff_setting_diff_result():
     batch_size = 2
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -162,6 +162,28 @@ def test_diff_seed_diff_result():
         assert _are_diff_for_diff_seed(shuffle=False, num_workers=1)
         assert _are_diff_for_diff_seed(shuffle=True, num_workers=2)
         assert _are_diff_for_diff_seed(shuffle=False, num_workers=2)
+
+        def _are_diff_for_diff_workers(seed, num_workers_pair: tuple[int, int], **kwargs):
+            nw1, nw2 = num_workers_pair
+
+            assert nw1 != nw2
+            assert "num_workers" not in kwargs
+
+            loader1 = make_loader(seed, num_workers=nw1, dataset=dataset, batch_size=batch_size, **kwargs)
+            loader2 = make_loader(seed, num_workers=nw2, dataset=dataset, batch_size=batch_size, **kwargs)
+
+            for batch1, batch2 in zip(loader1, loader2):
+                if not torch.equal(batch1, batch2):
+                    return True
+
+            return False
+
+        assert _are_diff_for_diff_workers(42, num_workers_pair=(0, 1), shuffle=True)
+        assert _are_diff_for_diff_workers(43, num_workers_pair=(0, 1), shuffle=False)
+        assert _are_diff_for_diff_workers(44, num_workers_pair=(1, 2), shuffle=True)
+        assert _are_diff_for_diff_workers(45, num_workers_pair=(1, 2), shuffle=False)
+        assert _are_diff_for_diff_workers(46, num_workers_pair=(0, 2), shuffle=True)
+        assert _are_diff_for_diff_workers(47, num_workers_pair=(0, 2), shuffle=False)
 
 
 def test_label_vs_context_size():
