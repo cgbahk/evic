@@ -62,9 +62,8 @@ class DistinctLabelImageContextDataset(Dataset):
         # i.e. `base_seed + worker_id`. So same seed by main process will generate same behavior,
         # and each worker behave differently from each others.
         #
-        #   https://docs.pytorch.org/docs/stable/data.html#randomness-in-multi-process-data-loading
+        #   https://github.com/pytorch/pytorch/blob/v2.9.1/docs/source/data.md?plain=1#L362
         #
-        # TODO Use permanent link
         # TODO Test this
         first_path = self._df.iloc[idx]["imgpath"]
         first_label = self._df.iloc[idx]["label"]
