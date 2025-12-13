@@ -58,6 +58,12 @@ class DistinctLabelImageContextDataset(Dataset):
         return len(self._df)
 
     def __getitem__(self, idx):
+        if torch.utils.data.get_worker_info() is None:
+            # In case of `num_workers == 0`, this is required for reproducibility.
+            torch.manual_seed(42 + idx)
+
+        # In case of `num_workers >= 1`:
+        #
         # By documentation, if using random funtionalities from torch, seeds are set reasonable,
         # i.e. `base_seed + worker_id`. So same seed by main process will generate same behavior,
         # and each worker behave differently from each others.
