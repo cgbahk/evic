@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+import multiprocessing as mp
 
 import pytest
 import torch
@@ -31,6 +32,21 @@ def create_random_images(root: Path, num_labels, imgs_per_label, size_wh):
             labels.append(label)
 
     return img_paths, labels
+
+
+def make_loader(seed, **kwargs):
+    assert "multiprocessing_context" not in kwargs
+
+    if kwargs.get("num_workers", 0) >= 1:
+        # Otherwise, gets unsafe 'fork' warning
+        #
+        # 'spawn' might be much slower than 'fork'
+        kwargs["multiprocessing_context"] = mp.get_context("spawn")
+
+    return torch.utils.data.DataLoader(
+        generator=torch.Generator().manual_seed(seed),
+        **kwargs,
+    )
 
 
 def test_positive():
@@ -66,7 +82,86 @@ def test_positive():
         # Dataloader might ignore this information
 
 
-# TODO Test reproducibility by seed
+def test_same_seed_same_result():
+    batch_size = 2
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        img_paths, labels = create_random_images(
+            Path(tmpdir),
+            num_labels=7,
+            imgs_per_label=5,
+            size_wh=(11, 13),
+        )
+
+        dataset = DistinctLabelImageContextDataset(
+            img_paths=img_paths,
+            labels=labels,
+            context_size=3,
+            transform=T.ToTensor(),
+        )
+
+        def _test_same(seed, **kwargs):
+            loader1 = make_loader(
+                seed, dataset=dataset, batch_size=batch_size, **kwargs
+            )
+            loader2 = make_loader(
+                seed, dataset=dataset, batch_size=batch_size, **kwargs
+            )
+
+            for batch1, batch2 in zip(loader1, loader2):
+                assert torch.equal(batch1, batch2)
+
+        _test_same(42, shuffle=True, num_workers=0)
+        _test_same(43, shuffle=False, num_workers=0)
+        _test_same(44, shuffle=True, num_workers=1)
+        _test_same(45, shuffle=False, num_workers=1)
+        _test_same(46, shuffle=True, num_workers=2)
+        _test_same(47, shuffle=False, num_workers=2)
+
+
+def test_diff_seed_diff_result():
+    batch_size = 2
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        img_paths, labels = create_random_images(
+            Path(tmpdir),
+            num_labels=5,
+            imgs_per_label=7,
+            size_wh=(11, 13),
+        )
+
+        dataset = DistinctLabelImageContextDataset(
+            img_paths=img_paths,
+            labels=labels,
+            context_size=3,
+            transform=T.ToTensor(),
+        )
+
+        def _are_diff_for_diff_seed(**kwargs):
+            loader1 = make_loader(42, dataset=dataset, batch_size=batch_size, **kwargs)
+            loader2 = make_loader(23, dataset=dataset, batch_size=batch_size, **kwargs)
+
+            for batch1, batch2 in zip(loader1, loader2):
+                if not torch.equal(batch1, batch2):
+                    return True
+
+            return False
+
+        assert _are_diff_for_diff_seed(shuffle=True, num_workers=0)
+
+        # This is known limitation: same results are generated even with
+        # different seeds when there is no worker, i.e. when dataloader runs on
+        # main process.
+        #
+        # This might be okay because:
+        # - On training, we usually use workers,
+        # - On validation, we usually want reproducibility from same seeds.
+        assert not _are_diff_for_diff_seed(shuffle=False, num_workers=0)
+
+        assert _are_diff_for_diff_seed(shuffle=True, num_workers=1)
+        assert _are_diff_for_diff_seed(shuffle=False, num_workers=1)
+        assert _are_diff_for_diff_seed(shuffle=True, num_workers=2)
+        assert _are_diff_for_diff_seed(shuffle=False, num_workers=2)
 
 
 def test_label_vs_context_size():

@@ -69,8 +69,7 @@ class DistinctLabelImageContextDataset(Dataset):
         # and each worker behave differently from each others.
         #
         #   https://github.com/pytorch/pytorch/blob/v2.9.1/docs/source/data.md?plain=1#L362
-        #
-        # TODO Test this
+
         first_path = self._df.iloc[idx]["imgpath"]
         first_label = self._df.iloc[idx]["label"]
 
