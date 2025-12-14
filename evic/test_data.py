@@ -1,6 +1,7 @@
 import tempfile
 from pathlib import Path
 import multiprocessing as mp
+import random
 
 import pytest
 import torch
@@ -8,7 +9,10 @@ import torchvision.transforms as T
 from PIL import Image
 import numpy as np
 
-from .data import DistinctLabelImageContextDataset
+from .data import (
+    DistinctLabelImageContextDataset,
+    PredefinedImageContextDataset,
+)
 
 
 def create_random_images(root: Path, num_labels, imgs_per_label, size_wh):
@@ -32,6 +36,27 @@ def create_random_images(root: Path, num_labels, imgs_per_label, size_wh):
             labels.append(label)
 
     return img_paths, labels
+
+
+def create_predefined_dataset(img_paths, *, context_count, context_size):
+    assert (context_count * context_size) % len(img_paths) == 0
+    duplication = (context_count * context_size) // len(img_paths)
+
+    contexts = []
+
+    indices = list(range(len(img_paths))) * duplication
+    random.shuffle(indices)
+
+    for i in range(context_count):
+        idxs_for_context = indices[i * context_size : (i + 1) * context_size]
+        ctx = [img_paths[j] for j in idxs_for_context]
+        contexts.append(ctx)
+
+    return PredefinedImageContextDataset(
+        contexts=contexts,
+        context_size=context_size,
+        transform=T.ToTensor(),
+    )
 
 
 def make_loader(seed, **kwargs):
@@ -61,21 +86,28 @@ def test_positive():
             size_wh=(W, H),
         )
 
-        dataset = DistinctLabelImageContextDataset(
+        dataset_distinct = DistinctLabelImageContextDataset(
             img_paths=img_paths,
             labels=labels,
             context_size=context_size,
             transform=T.ToTensor(),
         )
 
-        assert len(dataset) == len(img_paths)
+        dataset_predefined = create_predefined_dataset(
+            img_paths,
+            context_count=len(img_paths),  # Don't need to be, but to pass length check
+            context_size=context_size,
+        )
 
-        sample = dataset[0]
-        assert isinstance(sample, torch.Tensor)
-        assert sample.shape[0] == context_size
-        assert sample.shape[1] == 3  # channels: RGB
-        assert sample.shape[2] == H
-        assert sample.shape[3] == W
+        for dataset in (dataset_distinct, dataset_predefined):
+            assert len(dataset) == len(img_paths)
+
+            sample = dataset[0]
+            assert isinstance(sample, torch.Tensor)
+            assert sample.shape[0] == context_size
+            assert sample.shape[1] == 3  # channels: RGB
+            assert sample.shape[2] == H
+            assert sample.shape[3] == W
 
         # TODO Check that all labels in the context are distinct
         # The dataset need to return paths and labels consisting the context for this
@@ -117,6 +149,47 @@ def test_same_seed_same_result():
         _test_same(45, shuffle=False, num_workers=1)
         _test_same(46, shuffle=True, num_workers=2)
         _test_same(47, shuffle=False, num_workers=2)
+
+
+# TODO Check `PredefinedImageContextDataset`
+# - same seed same result
+# - diff setting diff result
+
+def test_diff_workers_same_result():
+    batch_size = 2
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        img_paths, labels = create_random_images(
+            Path(tmpdir),
+            num_labels=7,
+            imgs_per_label=5,
+            size_wh=(11, 13),
+        )
+
+        dataset = create_predefined_dataset(
+            img_paths,
+            context_count=len(img_paths),
+            context_size=3,
+        )
+
+        def _test_same_for_diff_workers(seed, num_workers_pair: tuple[int, int], **kwargs):
+            nw1, nw2 = num_workers_pair
+
+            assert nw1 != nw2
+            assert "num_workers" not in kwargs
+
+            loader1 = make_loader(seed, num_workers=nw1, dataset=dataset, batch_size=batch_size, **kwargs)
+            loader2 = make_loader(seed, num_workers=nw2, dataset=dataset, batch_size=batch_size, **kwargs)
+
+            for batch1, batch2 in zip(loader1, loader2):
+                assert torch.equal(batch1, batch2)
+
+        _test_same_for_diff_workers(42, num_workers_pair=(0, 1), shuffle=True)
+        _test_same_for_diff_workers(43, num_workers_pair=(0, 1), shuffle=False)
+        _test_same_for_diff_workers(44, num_workers_pair=(1, 2), shuffle=True)
+        _test_same_for_diff_workers(45, num_workers_pair=(1, 2), shuffle=False)
+        _test_same_for_diff_workers(46, num_workers_pair=(0, 2), shuffle=True)
+        _test_same_for_diff_workers(47, num_workers_pair=(0, 2), shuffle=False)
 
 
 def test_diff_setting_diff_result():

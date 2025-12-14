@@ -99,3 +99,30 @@ class DistinctLabelImageContextDataset(Dataset):
             images.append(img)
 
         return torch.stack(images, dim=0)
+
+
+class PredefinedImageContextDataset(Dataset):
+    Context = list[Path]
+
+    def __init__(self, contexts: list[Context], context_size: int, transform):
+        assert context_size >= 2
+        self._transform = transform
+
+        self._contexts = pd.Series(
+            [tuple(str(p) for p in ctx) for ctx in contexts]
+        )
+
+        for ctx_tuple in self._contexts:
+            assert len(ctx_tuple) == context_size
+
+    def __len__(self):
+        return len(self._contexts)
+
+    def __getitem__(self, idx):
+        images = []
+        for path in self._contexts.iloc[idx]:
+            img = Image.open(path).convert("RGB")
+            img = self._transform(img)
+            images.append(img)
+
+        return torch.stack(images, dim=0)
