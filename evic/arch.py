@@ -219,7 +219,7 @@ class LewisGameOnImageContext(nn.Module):
             sender_input=batched_context_image,
             receiver_input=_receiver_input,
             labels=_labels,
-            aux_input=_aux_input,
+            aux_input={},  # Otherwise error during `dump_interactions`
             receiver_output=batched_similarity,
             message=message.detach(),
             message_length=None,  # TODO
