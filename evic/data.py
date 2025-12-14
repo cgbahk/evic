@@ -44,7 +44,10 @@ class DistinctLabelImageContextDataset(Dataset):
         self.context_size = context_size
         self._transform = transform
 
-        self._df = pd.DataFrame({"imgpath": img_paths, "label": labels})
+        self._df = pd.DataFrame({
+            "imgpath": [str(path) for path in img_paths],
+            "label": labels,
+        })
         assert self._df["label"].value_counts().nunique() == 1
 
         self._label_to_imgpaths = {
