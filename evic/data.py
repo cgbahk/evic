@@ -34,6 +34,9 @@ class DistinctLabelImageContextDataset(Dataset):
     # - Profile which part is bottleneck
     # - Run heavy task on GPU
     # - Run on large number of CPUs and big memory (e.g. request more cpus for slurm)
+    #
+    # TODO Even though deliberately avoided to use list and dict, OOM still occurs.
+    #    Related: https://github.com/pytorch/pytorch/issues/13246#issuecomment-905703662
 
     def __init__(self, img_paths, labels, context_size: int, transform):
         assert len(img_paths) == len(labels)

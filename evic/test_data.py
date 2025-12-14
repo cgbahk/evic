@@ -109,9 +109,10 @@ def test_positive():
             assert sample.shape[2] == H
             assert sample.shape[3] == W
 
-        # TODO Check that all labels in the context are distinct
-        # The dataset need to return paths and labels consisting the context for this
-        # Dataloader might ignore this information
+        # TODO For DistinctLabelImageContextDataset, check that all labels in
+        # the context are distinct. The dataset need to return paths and labels
+        # consisting the context for this. Dataset users might ignore this
+        # information.
 
 
 def test_same_seed_same_result():

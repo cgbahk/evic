@@ -1,6 +1,7 @@
 # TODO Check performance difference with/without assert
 # TODO May remove dependency on `egg`
 # TODO Check and compare model description of https://aclanthology.org/2024.cmcl-1.5/
+# TODO Support evaluation mode that evaluate only the first context
 from typing import Optional
 
 import torch
@@ -167,6 +168,7 @@ class LewisGameOnImageContext(nn.Module):
         vision_module: nn.Module,
         speaker: nn.Module,
         listener: nn.Module,
+        # TODO Set policy on this
         train_logging_strategy: Optional[LoggingStrategy] = None,
         test_logging_strategy: Optional[LoggingStrategy] = None,
     ):
