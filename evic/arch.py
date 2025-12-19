@@ -52,6 +52,7 @@ def calculate_loss_from_batch(batched_sim):  # TODO Find better place
 
     # "input" (first argument) is 2D. "target" (second) is 1D.
     # In this case, `cross_entropy` is calculated for each "example"
+    # NOTE The first argument of `cross_entropy` is expected to be logits, not probabilities.
     loss_flat = F.cross_entropy(batched_sim_flat, labels_flat, reduction="none")
 
     loss = loss_flat.view(B, C)
