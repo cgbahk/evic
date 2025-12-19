@@ -144,13 +144,13 @@ class ListenAndDecideWithContext(nn.Module):
         assert self._E == E
         assert batched_context_feature.shape == (B, C, self._F)
 
-        batched_logit = self.fc(batched_context_feature.view(B * C, self._F))
-        batched_context_logit = batched_logit.view(B, C, E)
+        batched_image_embed = self.fc(batched_context_feature.view(B * C, self._F))
+        batched_context_image_embed = batched_image_embed.view(B, C, E)
 
         # This is highly coupled with loss calculation
         ret = F.cosine_similarity(
             embedded_cyclic_msg.unsqueeze(2),  # (B, C, 1, E)
-            batched_context_logit.unsqueeze(1),  # (B, 1, C, E)
+            batched_context_image_embed.unsqueeze(1),  # (B, 1, C, E)
             dim=-1,
         )
         ret = ret / self._temperature  # TODO Find better place
