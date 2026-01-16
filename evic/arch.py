@@ -15,6 +15,10 @@ from egg.core.interaction import LoggingStrategy
 def initialize_vision_module(name: str, pretrained: bool) -> tuple[nn.Module, int]:
     assert name == "vit"
 
+    # TODO `module.default_cfg["hf_hub_id"]` has detailed information. How to set it specifically?
+    #   Or just report it
+    #
+    # `vit_base_patch16_384` has `hf_hub_id` value of "timm/vit_base_patch16_384.augreg_in21k_ft_in1k"
     module = timm.create_model(
         model_name="vit_base_patch16_384",
         pretrained=pretrained,
