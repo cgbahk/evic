@@ -88,6 +88,11 @@ class SpeakOnContextInCycle(nn.Module):
         B, C, F = batched_context_feature.shape
         assert self._C == C and self._F == F
 
+        # TODO Use random permutation
+        # Currently, implementation is using cycles original context, but this doesn't need to be,
+        # as long as first entries are 0, 1, ..., n-1. Using cyclic permutation might induce
+        # unexpected location bias.
+
         # For example when C = 3, it would look like:
         #
         #   [[0, 1, 2],
