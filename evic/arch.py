@@ -2,7 +2,7 @@
 # TODO May remove dependency on `egg`
 # TODO Check and compare model description of https://aclanthology.org/2024.cmcl-1.5/
 # TODO Support evaluation mode that evaluate only the first context
-from typing import Optional
+from typing import Optional, NamedTuple
 
 import torch
 import torch.nn as nn
@@ -10,6 +10,20 @@ import torch.nn.functional as F
 import timm
 
 from egg.core.interaction import LoggingStrategy
+
+
+class Participant(NamedTuple):
+    """
+    A participant in multi-agent communication.
+
+    Each participant has a speaker and listener module.
+
+    Attributes:
+        speaker_module: The speaker network that produces messages
+        listener_module: The listener network that decodes messages
+    """
+    speaker_module: nn.Module
+    listener_module: nn.Module
 
 
 def initialize_vision_module(name: str, pretrained: bool) -> tuple[nn.Module, int]:
@@ -112,7 +126,7 @@ class SpeakOnContextInCycle(nn.Module):
 
         assert batched_cycled_context_feature.shape == (B, C, C, F)
 
-        batched_logit = self.fc(batched_cycled_context_feature.view(B * C, C * F))
+        batched_logit = self.fc(batched_cycled_context_feature.reshape(B * C, C * F))
         assert batched_logit.shape == (B * C, self._V)
 
         return batched_logit.view(B, C, self._V)
@@ -154,7 +168,7 @@ class ListenAndDecideWithContext(nn.Module):
         assert self._E == E
         assert batched_context_feature.shape == (B, C, self._F)
 
-        batched_image_embed = self.fc(batched_context_feature.view(B * C, self._F))
+        batched_image_embed = self.fc(batched_context_feature.reshape(B * C, self._F))
         batched_context_image_embed = batched_image_embed.view(B, C, E)
 
         # This is highly coupled with loss calculation
@@ -239,3 +253,145 @@ class LewisGameOnImageContext(nn.Module):
         )
 
         return loss.mean(), interaction
+
+
+class MultiAgentLewisGame(nn.Module):
+    """
+    Multi-agent communication game where each participant has a sender and receiver.
+    
+    Participants communicate exhaustively: A's sender can communicate to B's receiver
+    for all pairs (A, B), including self-communication (A's sender -> A's receiver).
+    
+    Args:
+        vision_module: Shared frozen vision encoder
+        participants: List of Participant namedtuples, one per participant
+        train_logging_strategy: Logging strategy for training
+        test_logging_strategy: Logging strategy for testing
+    """
+
+    def __init__(
+        self,
+        vision_module: nn.Module,
+        participants: list[Participant],
+        context_size: int,
+        # TODO Set policy on this
+        train_logging_strategy: Optional[LoggingStrategy] = None,
+        test_logging_strategy: Optional[LoggingStrategy] = None,
+    ):
+        super().__init__()
+        self._vision_module = vision_module
+        self._participant_count = len(participants)
+        self._context_size = context_size
+        
+        # Unpack participants into separate ModuleLists
+        self.speakers = nn.ModuleList([p.speaker_module for p in participants])
+        self.listeners = nn.ModuleList([p.listener_module for p in participants])
+        
+        self.train_logging_strategy = train_logging_strategy
+        self.test_logging_strategy = test_logging_strategy
+
+    def forward(
+        self,
+        batched_context_image,
+        _labels,
+        _receiver_input,
+        _aux_input,
+    ):
+        """
+        Multi-agent forward pass.
+
+        Args:
+            batched_context_image: (B, participant_count, context_size, C, H, W)
+                where B is the batch of participant groups
+            _labels: None (not used)
+            _receiver_input: None (not used)
+            _aux_input: None (not used)
+
+        Returns:
+            loss: mean loss across all sender-receiver pairs
+            interaction: logging information
+        """
+        assert _labels is None
+        assert _receiver_input is None
+        assert _aux_input is None
+
+        # batched_context_image shape: (B, P, C, img_C, img_H, img_W)
+        assert len(batched_context_image.shape) == 6
+
+        B, P, C, img_C, img_H, img_W = batched_context_image.shape
+        assert P == self._participant_count
+        assert C == self._context_size
+
+        # Extract features for all participants
+        # (B*P*C, img_C, img_H, img_W) -> (B*P*C, feature_dim)
+        batched_feature = self._vision_module(
+            batched_context_image.view(-1, img_C, img_H, img_W)
+        )
+        assert len(batched_feature.shape) == 2
+        assert batched_feature.shape[0] == B * P * C
+
+        # Reshape to (B, P, C, feature_dim)
+        batched_context_feature = batched_feature.view(B, P, C, -1)
+
+        # Each participant produces messages for their context
+        # messages[participant] = (B, C, vocab_size)
+        messages = [speaker(batched_context_feature[:, p, :, :]) for p, speaker in enumerate(self.speakers)]
+
+        # Compute similarity for all sender-receiver pairs
+        # Each listener receives messages from all speakers and computes similarity
+        all_similarities = []
+
+        for receiver_idx, listener in enumerate(self.listeners):
+            # Listener receives messages from all speakers (including self)
+            for sender_idx, message in enumerate(messages):
+                # Compute similarity: receiver_idx listens to sender_idx's message
+                # message: (B, C, vocab_size)
+                # batched_context_feature[:, receiver_idx, :, :]: (B, C, feature_dim)
+                similarity = listener(message, batched_context_feature[:, receiver_idx, :, :], None)
+                # similarity: (B, C, C)
+                all_similarities.append(similarity)
+
+        # Stack all similarities: (P*P, B, C, C)
+        all_similarities = torch.stack(all_similarities, dim=0)
+
+        # Reshape to (B, P*P, C, C) for loss calculation
+        all_similarities = all_similarities.permute(1, 0, 2, 3)
+
+        # Calculate loss for all pairs
+        # Reshape to (B*P*P, C, C) for calculate_loss_from_batch
+        B, P2, C_dim, _ = all_similarities.shape
+        all_similarities_flat = all_similarities.reshape(B * P2, C_dim, C_dim)
+
+        losses, aux_infos = [], []
+        for sim in all_similarities_flat:
+            loss, aux = calculate_loss_from_batch(sim.unsqueeze(0))  # Add batch dim
+            losses.append(loss.squeeze(0))  # Remove batch dim
+            aux_infos.append(aux)
+
+        # losses: (B*P*P, C)
+        losses = torch.stack(losses, dim=0)
+        mean_loss = losses.mean()
+
+        # Aggregate aux info
+        avg_acc = torch.stack([aux['acc'] for aux in aux_infos], dim=0).mean(dim=0)
+        aux_info = {'acc': avg_acc}
+
+        logging_strategy = (
+            self.train_logging_strategy if self.training else self.test_logging_strategy
+        )
+
+        # Aggregate messages for logging
+        aggregated_message = torch.stack(messages, dim=1)  # (B, P, C, vocab_size)
+
+        interaction = logging_strategy.filtered_interaction(
+            sender_input=batched_context_image,
+            receiver_input=_receiver_input,
+            labels=_labels,
+            aux_input={},
+            receiver_output=all_similarities.view(B, P2, C_dim, C_dim),
+            message=aggregated_message.detach(),
+            message_length=None,
+            aux=aux_info,
+        )
+
+        return mean_loss, interaction

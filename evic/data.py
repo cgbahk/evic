@@ -129,3 +129,91 @@ class PredefinedImageContextDataset(Dataset):
             images.append(img)
 
         return torch.stack(images, dim=0)
+
+
+class MultiParticipantImageContextDataset(Dataset):
+    """
+    A dataset for multi-agent communication where each participant gets
+    an independent context (group of images with different labels).
+    
+    Each participant in the community receives their own context, enabling
+    exhaustive communication between all sender-receiver pairs (including self).
+    
+    Returns: (participant_count, context_size, C, H, W) tensor
+    
+    Args:
+        img_paths: List of image paths
+        labels: List of labels corresponding to img_paths
+        context_size: Number of images per context (target + distractors)
+        participant_count: Number of participants in the community
+        transform: Transform for each image
+    """
+
+    def __init__(self, img_paths, labels, context_size: int, participant_count: int, transform):
+        assert len(img_paths) == len(labels)
+        assert context_size >= 2
+        assert participant_count >= 1
+        for path in img_paths:
+            assert Path(path).is_file()
+
+        self.context_size = context_size
+        self.participant_count = participant_count
+        self._transform = transform
+
+        self._df = pd.DataFrame({
+            "imgpath": [str(path) for path in img_paths],
+            "label": labels,
+        })
+        assert self._df["label"].value_counts().nunique() == 1
+
+        self._label_to_imgpaths = {
+            label: group["imgpath"].reset_index(drop=True)
+            for label, group in self._df.groupby("label")
+        }
+        self._labels = list(self._label_to_imgpaths.keys())
+        assert len(self._labels) >= context_size
+
+    def __len__(self):
+        # Return the number of base contexts (not multiplied by participants)
+        return len(self._df)
+
+    def __getitem__(self, idx):
+        if torch.utils.data.get_worker_info() is None:
+            torch.manual_seed(42 + idx)
+
+        # Generate context for each participant independently
+        participant_contexts = []
+        
+        for _ in range(self.participant_count):
+            # Get the first image (target)
+            first_path = self._df.iloc[idx]["imgpath"]
+            first_label = self._df.iloc[idx]["label"]
+
+            # Sample distractors with different labels
+            while True:
+                perm = torch.randperm(len(self._labels))
+                chosen_labels = [
+                    self._labels[i.item()] for i in perm[: self.context_size - 1]
+                ]
+
+                if first_label not in chosen_labels:
+                    break
+
+            context_paths = [first_path]
+            for label in chosen_labels:
+                paths = self._label_to_imgpaths[label]
+                rand_index = torch.randint(len(paths), (1,)).item()
+                rand_path = paths.iloc[rand_index]
+                context_paths.append(rand_path)
+
+            # Load and transform images for this participant
+            images = []
+            for path in context_paths:
+                img = Image.open(path).convert("RGB")
+                img = self._transform(img)
+                images.append(img)
+
+            participant_contexts.append(torch.stack(images, dim=0))
+
+        # Stack all participant contexts: (participant_count, context_size, C, H, W)
+        return torch.stack(participant_contexts, dim=0)
